@@ -826,13 +826,20 @@ class Enrollment(model.Model):
     steps: [
       {
         title: "Install optional integration dependencies",
-        body: "The AI wrappers use HTTPX and are asynchronous. Set OPENAI_API_KEY securely for OpenAI. Ollama must be running and have the selected model pulled.",
-        code: `python -m pip install 'lenapi[ai]'\nexport OPENAI_API_KEY="..."\nollama pull llama3.2`,
+        body: "Install the AI extra for the HTTP client. OpenAI reads its key from OPENAI_API_KEY by default. Ollama must be running at its base URL, and the requested model must already be pulled there.",
+        code: `python -m pip install 'lenapi[ai]'\nexport OPENAI_API_KEY="your-openai-api-key"\nollama pull qwen3:0.6b`,
       },
       {
-        title: "Call OpenAI and Ollama",
-        body: "Use async context managers to close connections reliably. Pass the Ollama base URL when it is hosted somewhere other than the local default.",
-        code: `from lenapi import OpenAI, Ollama\n\nasync with OpenAI(model="gpt-4.1-mini") as openai:\n    answer = await openai.responses("Explain LenAPI in one sentence.")\n\nasync with Ollama(\n    model="llama3.2", base_url="http://127.0.0.1:11434"\n) as ollama:\n    answer = await ollama.chat([\n        {"role": "user", "content": "Explain LenAPI in one sentence."}\n    ])`,
+        title: "Call OpenAI asynchronously",
+        body: "Use the Responses API through OpenAI.responses(). The client uses OPENAI_API_KEY from the environment unless you pass api_key directly. It returns the provider's JSON response; output_text contains the generated text when available.",
+        code: `import os\nfrom lenapi import OpenAI\n\nasync def explain_with_openai():\n    async with OpenAI(\n        model="gpt-4.1-mini",\n        api_key=os.environ["OPENAI_API_KEY"],\n    ) as openai:\n        response = await openai.responses(\n            "Explain LenAPI in one sentence."\n        )\n    return response.get("output_text", response)`,
+        note: "You can omit api_key=... to let OpenAI read OPENAI_API_KEY itself. Keep the key in your environment or secret manager, never in source code or a public repository.",
+      },
+      {
+        title: "Call Ollama asynchronously",
+        body: "The Ollama wrapper defaults to the local server at http://127.0.0.1:11434. Set base_url to the URL of your own Ollama server when it is hosted elsewhere. The call is non-streaming and returns Ollama's JSON response.",
+        code: `from lenapi import Ollama\n\nasync def explain_with_ollama():\n    async with Ollama(\n        model="qwen3:0.6b",\n        base_url="http://127.0.0.1:11434",\n    ) as ollama:\n        response = await ollama.chat([\n            {\n                "role": "user",\n                "content": "Explain LenAPI in one sentence.",\n            }\n        ])\n    return response["message"]["content"]`,
+        note: "Use the Ollama host URL only, such as http://127.0.0.1:11434. Do not add /api/chat; the LenAPI client appends that endpoint itself.",
       },
       {
         title: "Generate repeatable test data",
