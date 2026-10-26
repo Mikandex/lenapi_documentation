@@ -31,12 +31,22 @@ export default function DocsShell({ initialGuideId = "introduction" }: { initial
   const filteredGroups = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return guideGroups;
+    const searchableText = (guide: (typeof guides)[number]) => [
+      guide.title,
+      guide.summary,
+      ...guide.tags,
+      ...guide.steps.flatMap((step) => [
+        step.title,
+        step.body,
+        ...(step.list ?? []),
+        step.code ?? "",
+        step.note ?? "",
+      ]),
+    ].join(" ").toLowerCase();
     return guideGroups
       .map((group) => ({
         ...group,
-        guides: group.guides.filter((guide) =>
-          [guide.title, guide.summary, ...guide.tags].join(" ").toLowerCase().includes(needle),
-        ),
+        guides: group.guides.filter((guide) => searchableText(guide).includes(needle)),
       }))
       .filter((group) => group.guides.length > 0);
   }, [search]);

@@ -558,12 +558,37 @@ class Enrollment(model.Model):
     eyebrow: "GUIDE 12 · SECURITY CONTROLS",
     summary: "Add security and observability middleware, rate limits, IP cooldowns, CSRF checks, and private Swagger docs.",
     readTime: "9 min",
-    tags: ["middleware", "gzip", "throttle", "rate limit", "ip", "csrf", "docs", "cors"],
+    tags: ["middleware", "gzip", "throttle", "rate limit", "ip", "csrf", "docs", "cors", "redis", "REDIS_URL", "CACHE_BACKEND", "SECURITY_STORAGE", "request id", "timing", "install redis"],
     steps: [
       {
-        title: "Add optional middleware",
-        body: "Middleware is opt-in. Common built-ins cover CORS, gzip compression, request IDs, timing headers, and docs authentication.",
+        title: "How middleware works",
+        body: "Middleware is optional ASGI code that wraps requests and responses around your routes. Add it with app.add_middleware; the first added middleware wraps the later ones. LenAPI's built-ins include CORS, gzip compression, request IDs, timing headers, and documentation authentication. Add only the middleware your application needs.",
         code: `from lenapi.middleware import (\n    CORSMiddleware, GZipMiddleware, RequestIDMiddleware, TimingMiddleware,\n)\n\napp.add_middleware(RequestIDMiddleware)\napp.add_middleware(TimingMiddleware)\napp.add_middleware(GZipMiddleware, minimum_size=500)\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=["https://frontend.example"],\n    allow_methods=["GET", "POST", "PATCH", "DELETE"],\n    allow_headers=["authorization", "content-type"],\n)`,
+        list: [
+          "CORSMiddleware controls which browser origins, methods, and headers are allowed. Use explicit frontend origins in production; credentialed requests cannot use a wildcard origin.",
+          "GZipMiddleware compresses eligible response bodies when the client accepts gzip. minimum_size sets the size threshold; compresslevel ranges from 0 through 9.",
+          "RequestIDMiddleware accepts a safe request ID or creates one, then returns it in X-Request-ID for log correlation.",
+          "TimingMiddleware returns app processing time in X-Process-Time-Ms; it is not full network latency.",
+          "DocsAuthMiddleware protects configured Swagger, ReDoc, and OpenAPI paths using a callable authenticator.",
+        ],
+      },
+      {
+        title: "Configure CORS for a browser client",
+        body: "CORS is a browser policy, not API authentication. List the frontend origin and allow the methods and headers it actually sends. Expose response headers if browser JavaScript needs to read them. If cookies are used, enable allow_credentials and list exact origins instead of using a wildcard.",
+        code: `app.add_middleware(\n    CORSMiddleware,\n    allow_origins=["https://frontend.example"],\n    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],\n    allow_headers=["authorization", "content-type", "X-Flutterwave"],\n    expose_headers=["X-Request-ID", "X-Process-Time-Ms"],\n    allow_credentials=False,\n)`,
+        note: "If the frontend uses cookie authentication, set allow_credentials=True and keep allow_origins as an explicit list of origins. CORS does not replace authentication or CSRF protection.",
+      },
+      {
+        title: "Add compression and request observability",
+        body: "GZipMiddleware compresses eligible text, JSON, XML, JavaScript, WebAssembly, and SVG response types when Accept-Encoding permits it. It skips content that is already encoded or partial. Request ID and timing middleware add response headers that can be used by clients and logs.",
+        code: `app.add_middleware(RequestIDMiddleware)\napp.add_middleware(TimingMiddleware)\napp.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)\n\n# Example response headers:\n# X-Request-ID: 9af...\n# X-Process-Time-Ms: 2.731\n# Content-Encoding: gzip  (when response qualifies)`,
+        note: "Compression uses Python's standard library. It does not add a Starlette dependency. Choose a sensible minimum_size to avoid spending CPU compressing tiny responses.",
+      },
+      {
+        title: "Choose database or Redis for shared security state",
+        body: "Set REDIS_URL to the Redis server connection string. CACHE_BACKEND controls app.cache only; SECURITY_STORAGE independently controls shared sessions, API throttling/IP cooldown, opaque tokens, and HMAC nonce replay checks. To put both cache and security state in Redis, set both backend settings. Redis must be installed and running separately from the Python client package.",
+        code: `# settings.py\nREDIS_URL = "redis://127.0.0.1:6379/0"\nCACHE_BACKEND = "redis"\nSECURITY_STORAGE = "redis"\n\n# Install the Python Redis client in this project's environment:\npython -m pip install 'lenapi[redis]'\n\n# Confirm the Redis server responds:\nredis-cli ping  # PONG`,
+        note: "The URL format is redis://host:port/database-number; this uses localhost, port 6379, database 0. The quoted brackets are important in zsh. Installing lenapi[redis] adds the Python client, not the Redis server. If you want the cache in Redis but security state in SQL, leave SECURITY_STORAGE='database'.",
       },
       {
         title: "Configure rate limits",
@@ -660,12 +685,12 @@ class Enrollment(model.Model):
     eyebrow: "GUIDE 15 · CACHE",
     summary: "Store JSON-compatible values with expiration in process memory, the configured database, or Redis.",
     readTime: "4 min",
-    tags: ["cache", "redis", "ttl", "database", "get", "set", "delete"],
+    tags: ["cache", "redis", "ttl", "database", "get", "set", "delete", "REDIS_URL", "CACHE_BACKEND", "python -m pip install lenapi redis", "memory"],
     steps: [
       {
         title: "Choose a backend",
-        body: "Set CACHE_BACKEND to memory, database, or redis. Memory is process-local and temporary; database and Redis are better when multiple workers need shared values.",
-        code: `# settings.py\nCACHE_BACKEND = "database"  # memory, database, redis\nREDIS_URL = "redis://127.0.0.1:6379/0"`,
+        body: "Set CACHE_BACKEND to memory, database, or redis. This setting selects only app.cache. REDIS_URL is a connection string: redis://host:port/database-number. Memory is process-local and temporary; database and Redis are shared across app workers when configured to use the same backend.",
+        code: `# settings.py\nREDIS_URL = "redis://127.0.0.1:6379/0"\nCACHE_BACKEND = "redis"  # memory, database, or redis`,
       },
       {
         title: "Set, read, and delete cache entries",
@@ -674,8 +699,9 @@ class Enrollment(model.Model):
       },
       {
         title: "Initialize persistent storage",
-        body: "Database-backed cache uses the internal security-store table and is initialized by the migration command. Redis mode requires the redis extra and a reachable Redis server.",
-        code: `python lenora.py migration\npython -m pip install 'lenapi[redis]'`,
+        body: "Database-backed cache uses the internal security-store table and is initialized by the migration command. Redis mode requires the Python redis extra and a separate reachable Redis server. Installing the extra does not install or start the Redis server.",
+        code: `# For the database cache backend\npython lenora.py migration\n\n# Install the Redis client extra (quote brackets in zsh)\npython -m pip install 'lenapi[redis]'\n\n# Check a local Redis server\nredis-cli ping  # should print PONG`,
+        note: "CACHE_BACKEND='redis' affects app.cache. For Redis-backed sessions, throttles, IP cooldowns, opaque bearer tokens, or HMAC nonce checks, also set SECURITY_STORAGE='redis'.",
       },
     ],
   },
