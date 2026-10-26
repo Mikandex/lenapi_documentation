@@ -741,13 +741,19 @@ class Enrollment(model.Model):
     tags: ["webhook", "webhooks", "HMAC", "webhook_auth", "hmac_auth", "signature", "event_id", "idempotency", "retry", "Body", "BackgroundTasks", "API key", "bearer", "callback"],
     steps: [
       {
-        title: "Understand inbound and outbound webhooks",
-        body: "An inbound webhook is an HTTP request sent by a provider to your LenAPI route when an event occurs. An outbound webhook is a request your application sends to another service. Providers retry when they time out or receive an error, so acknowledge promptly, validate each event, and make processing idempotent. Use HTTPS in production.",
+        title: "Start with a plain webhook endpoint",
+        body: "A webhook is an HTTP request sent when an event happens. This is the smallest inbound webhook: it accepts any JSON event and returns it, with no signature or authentication check. LenAPI does not require HMAC; you can start with this route and add a verification option when your integration needs one.",
+        code: `from typing import Any\nfrom lenapi import Body, LENAPI\n\napp = LENAPI()\n\n@app.post("/webhooks/events")\nasync def receive_event(payload: Any = Body()):\n    # Inspect or validate the event before processing it.\n    return {"received": True, "event": payload}`,
+        note: "This route is intentionally unverified. Use it for local integration tests, trusted internal networks, or nonsensitive events. Before exposing it publicly or triggering sensitive actions, add a verification option below. HTTPS protects data in transit but does not authenticate the sender.",
+      },
+      {
+        title: "Choose how to verify the sender when needed",
+        body: "Providers retry webhook requests when delivery times out or receives an error. Verify the sender using the scheme it supports, validate each event, acknowledge promptly, and make processing idempotent.",
         list: [
           "Use a provider's native signature verification when it publishes a signing secret and signature format.",
           "Use LenAPI hmac_auth when both systems can share a secret and agree to LenAPI's timestamp, method, path, body-digest, and nonce format.",
           "If the provider cannot sign requests, require another credential such as a bearer token or a dedicated secret header, and add network restrictions and event deduplication where available.",
-          "Do not expose a state-changing webhook route without verification just because its URL is difficult to guess.",
+          "If a sender supports no signature or credential, keep the route behind a trusted gateway or limit it to non-sensitive actions.",
         ],
       },
       {
