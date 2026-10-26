@@ -520,6 +520,25 @@ class Enrollment(model.Model):
         code: `from lenapi.security import SocialAuth\n\nauth = SocialAuth(\n    providers=["google", "github", "linkedin"],\n    auto_register=True,\n    jwt_enabled=True,\n)\n\napp.include_router(auth.router(), prefix="/auth")`,
       },
       {
+        title: "Understand what SocialAuth returns",
+        body: "jwt_enabled controls the credential LenAPI issues after the provider callback. In the current implementation, the only built-in LenAPI credential it issues is a JWT access token. It does not issue API keys, session cookies, opaque bearer tokens, or refresh tokens. The provider OAuth access token is used internally to fetch the provider profile and is not returned. With jwt_enabled=False, the callback returns identity and user_id when a local user was resolved, but no LenAPI token.",
+        code: `# With auto_register=True and jwt_enabled=True, the callback response
+# has this shape; identity fields depend on the provider:
+{
+    "identity": {"sub": "provider-subject", "email": "ada@example.com"},
+    "user_id": 42,
+    "access_token": "<LenAPI JWT>",
+    "token_type": "bearer",
+    "expires_in": 3600,
+}
+
+# Without jwt_enabled=True, the response has identity and, if resolved,
+# user_id. It does not contain access_token or token_type.
+# Send the LenAPI access token to protected routes as:
+# Authorization: Bearer <access_token>`,
+        note: "To issue a session, API key, or opaque token after social login, implement that credential flow explicitly after callback or use a custom callback. Keep provider tokens and LenAPI tokens distinct.",
+      },
+      {
         title: "Configure provider callback URLs",
         body: "Register each exact callback URL with the provider console. Google and LinkedIn use OIDC identity endpoints. GitHub uses OAuth 2.0 and its profile/email APIs; it is not an OIDC provider in this integration.",
         code: `# Example for local development\nGOOGLE_REDIRECT_URI = "http://localhost:8009/auth/google/callback"\nGITHUB_REDIRECT_URI = "http://localhost:8009/auth/github/callback"\nLINKEDIN_REDIRECT_URI = "http://localhost:8009/auth/linkedin/callback"`,
