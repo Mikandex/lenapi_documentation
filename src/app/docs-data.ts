@@ -214,9 +214,45 @@ export const guides: Guide[] = [
       },
       {
         title: "Choose appropriate field types",
-        body: "Fields include AutoField, IntegerField, BigIntegerField/BigIntField, StringField, TextField, EmailField, PhoneField, IPField, BooleanField, FloatField, DecimalField, DateTimeField, JSONField/Json, UUIDField, ImageField, ForeignKeyField, and ManyToManyField. Most fields default to nullable=True and blank=True; BooleanField defaults to True. JSONField stores JSON-compatible dictionaries, lists, strings, numbers, booleans, or null. Use a factory such as default=dict for mutable defaults.",
+        body: "Fields include AutoField, IntegerField, PositiveIntegerField, BigIntegerField/BigIntField, PositiveBigIntegerField, StringField, TextField, EmailField, PhoneField, IPField, URLField, BooleanField, FloatField, DecimalField, DateField, TimeField, DateTimeField, DurationField, JSONField/Json, UUIDField, ImageField, FileField, FileImageField, ForeignKeyField, OneToOneField, and ManyToManyField. Most fields default to nullable=True and blank=True; BooleanField defaults to True. JSONField stores JSON-compatible dictionaries, lists, strings, numbers, booleans, or null. Use a factory such as default=dict for mutable defaults.",
         code: `class ExamResult(model.Model):\n    score = model.DecimalField(max_digits=6, decimal_places=2)\n    details = model.Json(default=dict)\n    is_published = model.BooleanField(default=False, nullable=False)\n\nresult = ExamResult.create(\n    score=92.50,\n    details={"course": "Python", "attempt": 1},\n    is_published=True,\n)`,
-        note: "Use Pydantic request schemas to validate incoming values too. Database field types alone do not validate an API payload.",
+        note: "LenAPI validates values for EmailField, PhoneField, IPField, URLField, UUIDField, and positive integer fields when a model is saved. Keep Pydantic request schemas as the API boundary: they validate and document request input before database logic runs.",
+      },
+      {
+        title: "Validate model values and customize errors",
+        body: "Email, international phone number, IP, URL, UUID, and nonnegative integer fields are validated when save() or asave() is called. A validation failure raises HTTP 422. Phone values must start with + and contain no more than 18 characters. IPField accepts IPv4 and IPv6. Customize a validation message with error_messages; unique is available for unique columns.",
+        code: `class Customer(model.Model):
+    email = model.EmailField(
+        unique=True,
+        error_messages={
+            "email": "This is not an email",
+            "unique": "An account already uses this email",
+        },
+    )
+    phone = model.PhoneField(max_length=18)
+    ip_address = model.IPField()
+    website = model.URLField()
+    age = model.PositiveIntegerField(nullable=False)
+    public_id = model.UUIDField()
+
+# Invalid values raise HTTPException(422, ...).
+# Positive* fields also have a database CHECK constraint, protecting direct SQL writes.`,
+      },
+      {
+        title: "Use date, time, and duration fields",
+        body: "DateField, TimeField, and DateTimeField default to the current UTC date/time when no explicit default is supplied. Set auto_add_now=False to opt out. DurationField stores a fixed datetime.timedelta; calendar months and years need calendar-aware date arithmetic.",
+        code: `from datetime import datetime, timezone
+from lenapi import model
+
+class Subscription(model.Model):
+    started_at = model.DateTimeField()
+    started_on = model.DateField()
+    reminder_at = model.TimeField()
+    trial_length = model.DurationField(weeks=1)
+
+subscription = Subscription.create()
+expires_at = datetime.now(timezone.utc) + subscription.trial_length
+# weeks=1 stores datetime.timedelta(days=7), then add it to a start time.`,
       },
       {
         title: "Use unique fields and unique lookups",
@@ -249,6 +285,38 @@ class Enrollment(model.Model):
         title: "Set delete behavior on foreign keys",
         body: "Choose one policy for related records: cascade deletes children, null keeps children with a NULL foreign key, and protected blocks deletion while a child refers to the row.",
         code: `class Verification(model.Model):\n    user_id = model.ForeignKeyField("user.id", model=model.cascade.delete)\n\nclass AuditLog(model.Model):\n    user_id = model.ForeignKeyField(\n        "user.id", nullable=True, model=model.null\n    )\n\nclass Invoice(model.Model):\n    user_id = model.ForeignKeyField("user.id", model=model.protected)`,
+      },
+      {
+        title: "Define one-to-one and one-to-many relationships",
+        body: "One-to-one and one-to-many both use foreign keys, but their cardinality differs. OneToOneField places a unique foreign key on the dependent model, so each learner has at most one profile. For one-to-many, put a regular ForeignKeyField on the many-side: each learner points to one classroom, while a classroom can have many learners. There is no separate OneToManyField. Use special() to resolve a foreign key from one loaded row; use filter() to fetch the many-side rows.",
+        code: `class Classroom(model.Model):
+    name = model.StringField(max_length=120)
+
+class Learner(model.Model):
+    classroom_id = model.ForeignKeyField(
+        "classroom.id", nullable=True, model=model.null
+    )
+
+class LearnerProfile(model.Model):
+    learner_id = model.OneToOneField(
+        "learner.id", nullable=False, model=model.CASCADE
+    )
+    biography = model.TextField(default="")
+
+# Foreign key: resolve one learner's classroom (sync).
+learner = Learner.get(id=1).special("classroom_id")
+classroom = learner.classroom_id  # Classroom instance, or None
+
+# One-to-many: list all learners assigned to the classroom.
+learners = Learner.filter(classroom_id=classroom.id).all()
+
+# One-to-one: fetch the learner's single profile.
+profile = LearnerProfile.get(learner_id=learner.id).get()
+
+# Async one-to-many and one-to-one queries.
+learners = await Learner.afilter(classroom_id=classroom_id).all()
+profile = await LearnerProfile.aget(learner_id=learner_id)`,
+        note: "OneToOneField creates a unique constraint automatically. The foreign key uses SET NULL here, so classroom_id must be nullable. Run python lenora.py migration after changing these models.",
       },
       {
         title: "Connect many-to-many models",
@@ -804,8 +872,8 @@ class Enrollment(model.Model):
       },
       {
         title: "Persist jobs in a worker queue",
-        body: "BackgroundQueue supports database, Redis, and process-cache backends. Database and Redis jobs are delivered at least once, so task handlers should be idempotent.",
-        code: `from lenapi import BackgroundQueue\n\nqueue = BackgroundQueue(app.database)\n\n@queue.task("send_welcome")\nasync def send_welcome(email: str):\n    ...\n\njob_id = await queue.enqueue("send_welcome", "ada@example.com")`,
+        body: "BackgroundQueue supports database, Redis, and process-cache backends. Configure max_attempts and retry_delay when creating the queue: max_attempts is the total number of executions, and retry_delay is the base delay in seconds. Failed jobs wait retry_delay × attempt number before the next attempt. Pass delay_seconds to enqueue() to schedule the first attempt for later; it is not passed to the task function. Database and Redis jobs are delivered at least once, so task handlers should be idempotent.",
+        code: `from lenapi import BackgroundQueue\n\nqueue = BackgroundQueue(\n    app.database,\n    max_attempts=3,\n    retry_delay=10,  # seconds between retries, multiplied by attempt number\n)\n\n@queue.task("send_welcome")\nasync def send_welcome(email: str):\n    ...\n\njob_id = await queue.enqueue(\n    "send_welcome",\n    "ada@example.com",\n    delay_seconds=300,  # run in five minutes\n)`,
       },
       {
         title: "Run the worker separately",

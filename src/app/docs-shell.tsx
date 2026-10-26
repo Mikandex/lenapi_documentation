@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { guideGroups, guides } from "./docs-data";
 import styles from "./page.module.css";
 
@@ -29,8 +30,12 @@ export default function DocsShell({ initialGuideId = "introduction" }: { initial
   const [copied, setCopied] = useState<string | null>(null);
   const active = guides.find((guide) => guide.id === activeId) ?? guides[0];
   const filteredGroups = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return guideGroups;
+    const terms = search
+      .trim()
+      .toLocaleLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (terms.length === 0) return guideGroups;
     const searchableText = (guide: (typeof guides)[number]) => [
       guide.title,
       guide.summary,
@@ -42,11 +47,16 @@ export default function DocsShell({ initialGuideId = "introduction" }: { initial
         step.code ?? "",
         step.note ?? "",
       ]),
-    ].join(" ").toLowerCase();
+    ].join(" ").toLocaleLowerCase();
     return guideGroups
       .map((group) => ({
         ...group,
-        guides: group.guides.filter((guide) => searchableText(guide).includes(needle)),
+        // Match each query word independently against all guide text, including
+        // explanations and code. Partial words work too: "data" matches "database".
+        guides: group.guides.filter((guide) => {
+          const content = searchableText(guide);
+          return terms.every((term) => content.includes(term));
+        }),
       }))
       .filter((group) => group.guides.length > 0);
   }, [search]);
@@ -80,7 +90,7 @@ export default function DocsShell({ initialGuideId = "introduction" }: { initial
           <Glyph name="search" />
           <input
             aria-label="Search documentation"
-            placeholder="Search the docs"
+            placeholder="Search guides, topics, and code"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
@@ -227,6 +237,21 @@ export default function DocsShell({ initialGuideId = "introduction" }: { initial
             </nav>
             <div className={styles.helpCard}><span className={styles.helpIcon}><Glyph name="book" /></span><b>New to LenAPI?</b><p>Start with the introduction, then follow the guides in order.</p><Link href="/" onClick={() => selectGuide("introduction")}>Start at the beginning <Glyph name="arrow" /></Link></div>
             <div className={styles.sourceCard}><span>DOCUMENTATION SOURCE</span><b>Framework README</b><p>Examples are based on the current LenAPI framework docs.</p><a href="https://github.com/Mikandex/lenapi/blob/main/README.md" target="_blank" rel="noreferrer">View on GitHub <Glyph name="arrow" /></a></div>
+            <section className={styles.sponsorCard} aria-labelledby="sponsors-heading">
+              <span className={styles.railTitle} id="sponsors-heading">SPONSORS</span>
+              <a href="https://justjobng.online" target="_blank" rel="noreferrer" aria-label="JustJob website">
+                <Image src="/sponsors/justjob.webp" alt="JustJob" width={120} height={64} />
+              </a>
+              <a href="https://www.letsmeet.date/" target="_blank" rel="noreferrer" aria-label="LetsMeet website">
+                <Image src="/sponsors/letsmeet.jpeg" alt="LetsMeet" width={120} height={64} />
+              </a>
+              <a href="https://www.litregreprediction.site/" target="_blank" rel="noreferrer" aria-label="Litregre Prediction website">
+                <Image src="/sponsors/litregre.png" alt="Litregre Prediction" width={120} height={64} />
+              </a>
+              <a href="https://maekandex.com" target="_blank" rel="noreferrer" aria-label="Maekandex website">
+                <Image src="/sponsors/maekandex.jpeg" alt="Maekandex" width={120} height={64} />
+              </a>
+            </section>
           </aside>
         </div>
       </div>
