@@ -832,13 +832,13 @@ class Enrollment(model.Model):
       {
         title: "Call OpenAI asynchronously",
         body: "Use the Responses API through OpenAI.responses(). The client uses OPENAI_API_KEY from the environment unless you pass api_key directly. It returns the provider's JSON response; output_text contains the generated text when available.",
-        code: `import os\nfrom lenapi import OpenAI\n\nasync def explain_with_openai():\n    async with OpenAI(\n        model="gpt-4.1-mini",\n        api_key=os.environ["OPENAI_API_KEY"],\n    ) as openai:\n        response = await openai.responses(\n            "Explain LenAPI in one sentence."\n        )\n    return response.get("output_text", response)`,
+        code: `import os\nfrom lenapi import OpenAI\n\nasync def ask_openai():\n    async with OpenAI(\n        model="gpt-4.1-mini",\n        api_key=os.environ["OPENAI_API_KEY"],\n    ) as openai:\n        response = await openai.responses(\n            "Explain what an API is in one sentence."\n        )\n    return response.get("output_text", response)`,
         note: "You can omit api_key=... to let OpenAI read OPENAI_API_KEY itself. Keep the key in your environment or secret manager, never in source code or a public repository.",
       },
       {
         title: "Call Ollama asynchronously",
         body: "The Ollama wrapper defaults to the local server at http://127.0.0.1:11434. Set base_url to the URL of your own Ollama server when it is hosted elsewhere. The call is non-streaming and returns Ollama's JSON response.",
-        code: `from lenapi import Ollama\n\nasync def explain_with_ollama():\n    async with Ollama(\n        model="qwen3:0.6b",\n        base_url="http://127.0.0.1:11434",\n    ) as ollama:\n        response = await ollama.chat([\n            {\n                "role": "user",\n                "content": "Explain LenAPI in one sentence.",\n            }\n        ])\n    return response["message"]["content"]`,
+        code: `from lenapi import Ollama\n\nasync def ask_ollama():\n    async with Ollama(\n        model="qwen3:0.6b",\n        base_url="http://127.0.0.1:11434",\n    ) as ollama:\n        response = await ollama.chat([\n            {\n                "role": "user",\n                "content": "Explain what an API is in one sentence.",\n            }\n        ])\n    return response["message"]["content"]`,
         note: "Use the Ollama host URL only, such as http://127.0.0.1:11434. Do not add /api/chat; the LenAPI client appends that endpoint itself.",
       },
       {
