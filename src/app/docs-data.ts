@@ -625,8 +625,9 @@ class Enrollment(model.Model):
     steps: [
       {
         title: "Create a dependency",
-        body: "A dependency is a normal sync or async callable. Its typed inputs are resolved like endpoint parameters.",
-        code: `from lenapi import Depends\n\ndef current_user(user_id: int):\n    return {"id": user_id, "name": "Ada"}\n\n@app.get("/profile/{user_id}")\ndef profile(user: dict = Depends(current_user)):\n    return user`,
+        body: "A dependency is a normal sync or async callable. Its typed inputs are resolved like endpoint parameters. If a dependency and route both declare user_id, LenAPI passes the matching path value into the dependency, then injects its return value into the route parameter.",
+        code: `from lenapi import Depends, LENAPI\n\napp = LENAPI()\n\ndef current_user(user_id: int):\n    return {"id": user_id, "name": "Tolu"}\n\n@app.post("/profile/{user_id}")\ndef profile(user_id: int, user: dict = Depends(current_user)):\n    return user`,
+        note: "For POST /profile/12, current_user receives user_id=12 and profile receives the dependency result as user. This example demonstrates injection; replace it with real authentication and authorization logic before using it to protect data.",
       },
       {
         title: "Reuse an authenticator",
