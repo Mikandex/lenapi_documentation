@@ -592,9 +592,9 @@ class Enrollment(model.Model):
       },
       {
         title: "Configure rate limits",
-        body: "Limits can count requests by IP before authentication, anonymous traffic, or an authenticated identity. Shared database or Redis storage coordinates counters across worker processes.",
-        code: `app = LENAPI(throttle={\n    "ip": "300/minute",\n    "anonymous": "30/minute",\n    "authenticated": "600/minute",\n})\n\n@api.post("/login", throttle={"ip": "5/minute"})\ndef login(data: LoginInput):\n    ...`,
-        note: "A BasicAuth route receives a default 10-per-minute IP limit unless a pre-auth limit is configured. An explicit throttle={} disables inherited limits. Process-memory counters do not coordinate across workers.",
+        body: "Set app-level limits on LENAPI to provide defaults for routes. A route or router with its own throttle mapping replaces the inherited mapping; it does not merge with it. Repeat any global scopes you still want enforced on that route. ip counts by client IP, anonymous counts unauthenticated calls, and authenticated counts a verified identity from auth=.",
+        code: `app = LENAPI(throttle={\n    "ip": "300/minute",\n    "anonymous": "30/minute",\n    "authenticated": "600/minute",\n})\n\n# Uses the app-level defaults.\n@app.get("/items")\ndef items():\n    return {"items": []}\n\n# Replaces the defaults for /login. Keep the scopes needed here.\n@app.post("/login", throttle={\n    "ip": "5/minute",\n    "anonymous": "30/minute",\n})\ndef login(data: LoginInput):\n    return verify_credentials(data)`,
+        note: "If login used only throttle={\"ip\": \"5/minute\"}, only that route-specific limit would apply; the global anonymous limit would not. An explicit throttle={} disables inherited limits. BasicAuth has a default 10-per-minute IP limit unless a pre-auth IP/anonymous limit is configured. Process-memory counters do not coordinate across workers.",
       },
       {
         title: "Use a cooldown for sensitive endpoints",
