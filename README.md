@@ -22,4 +22,4 @@ Guide text and examples live in `src/app/docs-data.ts`. The interactive document
 
 ## Coverage
 
-The guides cover the introduction and quickstart, routing, Pydantic validation, dependencies, SQL models and migrations, CRUD/search/pagination, async database access, authentication, social login, middleware and security, uploads, WebSockets, cache, background jobs, AI/Faker, testing, and deployment. Examples reflect the framework's current README and note documented process-local and provider support limits where applicable.
+The guides cover the introduction and quickstart, HTTP routing, independent project mounting, Pydantic validation, SQL models and migrations, CRUD/search/pagination, async database access, authentication, social login, middleware and security, public/private uploads, WebSockets, cache, webhooks, durable background jobs, AI/Faker, testing, deployment, and the optional model admin console. The admin guide explains model/field allow-lists, per-model permissions, resource monitoring, and the single admin entry point for mounted projects. Examples reflect the framework README and call out MongoDB's beta status and other documented limits.

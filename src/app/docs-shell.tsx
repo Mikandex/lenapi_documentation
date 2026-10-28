@@ -51,8 +51,8 @@ export default function DocsShell({ initialGuideId = "introduction" }: { initial
     return guideGroups
       .map((group) => ({
         ...group,
-        // Match each query word independently against all guide text, including
-        // explanations and code. Partial words work too: "data" matches "database".
+        // Match each query word independently, including partial words such as
+        // "data" in "database", across explanations, examples, and code.
         guides: group.guides.filter((guide) => {
           const content = searchableText(guide);
           return terms.every((term) => content.includes(term));
@@ -167,7 +167,7 @@ export default function DocsShell({ initialGuideId = "introduction" }: { initial
 
             {active.id === "introduction" && (
               <section className={styles.quickStats} aria-label="Framework highlights">
-                <div><b>19</b><span>step-by-step guides</span></div>
+                <div><b>{guides.length}</b><span>step-by-step guides</span></div>
                 <div><b>Sync + async</b><span>routes and database access</span></div>
                 <div><b>One toolkit</b><span>API, data, security, realtime</span></div>
               </section>
