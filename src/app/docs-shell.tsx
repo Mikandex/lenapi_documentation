@@ -121,7 +121,7 @@ export default function DocsShell({ initialGuideId = "introduction" }: { initial
         <div className={styles.sidebarBottom}>
           <div className={styles.versionCard}>
             <span className={styles.pulse} />
-            <div><b>LenAPI 0.1.4</b><small>Framework guide</small></div>
+            <div><b>LenAPI 0.1.4.1</b><small>Framework guide</small></div>
             <span className={styles.versionArrow}><Glyph name="arrow" /></span>
           </div>
           <p className={styles.sideNote}>Built for Python developers who want less setup and a clear path from first route to production.</p>

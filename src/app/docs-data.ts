@@ -1123,7 +1123,7 @@ python lenora.py migration`,
         title: "Build and run with Docker",
         body: "Install LenAPI from PyPI in the image; a Git client is not needed. Keep secrets and local database files out of the Docker build context, expose the same port that the server listens on, and persist SQLite data in a volume. Run checked-in migrations as a one-off release step before starting the app.",
         code: `# requirements.txt — install from PyPI
-lenapi==0.1.4
+lenapi==0.1.4.1
 
 # Dockerfile
 FROM python:3.14-slim
@@ -1150,7 +1150,7 @@ docker build -t my-lenapi-app .`,
         title: "Deploy with SQLite and an in-memory cache",
         body: "This single-container option uses SQLite for application data and LenAPI's in-process memory cache. Attach a persistent volume at /data so records survive container replacement. Keep SECURITY_STORAGE on the database so sessions, rate-limit state, and related security records are persisted with SQL. The cache is process-local and clears when the container restarts; use one application worker for this configuration.",
         code: `# requirements.txt
-lenapi==0.1.4
+lenapi==0.1.4.1
 
 # settings.py
 import os
@@ -1180,7 +1180,7 @@ docker run -d --name my-lenapi-app --restart unless-stopped \\
         title: "Deploy with PostgreSQL and Redis",
         body: "Use PostgreSQL for application tables and LenAPI's database-backed security storage, and Redis for the cache. The app image needs the postgres and redis extras from PyPI. Compose starts the database and cache as private services, waits for their health checks, and publishes only the API port. Use a persistent PostgreSQL volume. Redis is configured as the cache here, not as the framework security store.",
         code: `# requirements.txt
-lenapi[postgres,redis]==0.1.4
+lenapi[postgres,redis]==0.1.4.1
 
 # settings.py
 import os
