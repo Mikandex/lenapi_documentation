@@ -159,7 +159,7 @@ export default function DocsShell({ initialGuideId = "introduction" }: { initial
                 </div>
                 <div className={styles.terminalCard}>
                   <div className={styles.terminalTop}><span /><span /><span /><b>main.py</b></div>
-                  <pre><code><span className={styles.syntaxPurple}>from</span> lenapi <span className={styles.syntaxPurple}>import</span> LENAPI<br /><br />app = LENAPI()<br /><br /><span className={styles.syntaxBlue}>@app.get</span>(<span className={styles.syntaxGreen}>&quot;/hello&quot;</span>)<br /><span className={styles.syntaxPurple}>def</span> hello():<br />    <span className={styles.syntaxPurple}>return</span> {'{'}<span className={styles.syntaxGreen}>&quot;message&quot;</span>: <span className={styles.syntaxGreen}>&quot;Hello, world!&quot;</span>{'}'}</code></pre>
+                  <pre><code><span className={styles.syntaxPurple}>from</span> lenapi_bootstrap <span className={styles.syntaxPurple}>import</span> create_app<br /><br />app = create_app(__file__, __package__)<br /><br /><span className={styles.syntaxBlue}>@app.get</span>(<span className={styles.syntaxGreen}>&quot;/hello&quot;</span>)<br /><span className={styles.syntaxPurple}>def</span> hello():<br />    <span className={styles.syntaxPurple}>return</span> {'{'}<span className={styles.syntaxGreen}>&quot;message&quot;</span>: <span className={styles.syntaxGreen}>&quot;Hello, world!&quot;</span>{'}'}</code></pre>
                   <div className={styles.terminalFooter}><span className={styles.liveDot} /> Ready to run <code>python lenora.py run</code></div>
                 </div>
               </section>
