@@ -588,8 +588,15 @@ python lenora.py migration`,
       },
       {
         title: "Use your own user model",
-        body: "JWT and Basic authentication can use a developer model by passing user_model. For Basic login, set BASIC_AUTH_FIELD in settings.py to a column on that model; the password column is named password and must contain a LenAPI-compatible one-way hash. The framework default User remains available for quick setup.",
-        code: `from lenapi import authentication\nfrom app.models import Customer\n\n# settings.py: BASIC_AUTH_FIELD = "email"\nbasic_auth = authentication("basic_login", user_model=Customer)\njwt_auth = authentication("jwt", user_model=Customer)`,
+        body: "JWT and Basic authentication can use a developer model by passing user_model. For JWT, identifier_field selects both the model column used for lookup and the JSON field accepted by POST /auth/token; it defaults to username. For Basic login, set BASIC_AUTH_FIELD in settings.py or pass identifier_field. The password column must contain a LenAPI-compatible one-way hash. The framework default User remains available for quick setup.",
+        code: `from lenapi_bootstrap import create_app\nfrom lenapi import authentication\n\napp = create_app(__file__, __package__)\nfrom app.models import Customer\n\n# Customer must have email and password columns.\nemail_jwt = authentication(\n    "jwt", user_model=Customer, identifier_field="email", app=app\n)\nemail_basic = authentication(\n    "basic_login", user_model=Customer, identifier_field="email", app=app\n)`,
+        note: "Pass the LENAPI app to app= when you want JWT refresh-token replay checks to use its shared security store. Do not pass a Router as app.",
+      },
+      {
+        title: "Mount email-based JWT token routes",
+        body: "Create the app before importing route modules, configure JWT with your model's email field, then mount auth.router(). The token endpoint accepts email and password when identifier_field is email. Your registration or provisioning flow must store a password hash in the model's password column.",
+        code: `# main.py\nfrom lenapi_bootstrap import create_app\nfrom lenapi import Depends, authentication\n\napp = create_app(__file__, __package__)\nfrom app.models import ProjectAdmin\n\nauth = authentication(\n    "jwt",\n    user_model=ProjectAdmin,\n    identifier_field="email",\n    app=app,\n)\n\napp.include_router(auth.router())  # POST /auth/token and /auth/refresh\n\n@app.get("/admin/profile", auth=auth)\ndef admin_profile(identity=Depends(auth)):\n    return {"admin_id": identity["sub"]}\n\n# POST /auth/token JSON body:\n# {"email": "admin@example.com", "password": "..."}`,
+        note: "This only configures login verification and token issuance. Create admins through a trusted registration/provisioning flow, and store passwords with make_password().",
       },
       {
         title: "Use JWT and mount token endpoints",
@@ -1094,7 +1101,7 @@ python lenora.py migration`,
     eyebrow: "GUIDE 20 · OPERATIONS",
     summary: "Configure the server, database, secrets, proxy boundary, and production process.",
     readTime: "6 min",
-    tags: ["production", "uvicorn", "settings", "host", "port", "deployment", "secret"],
+    tags: ["production", "uvicorn", "settings", "host", "port", "deployment", "secret", "docker", "postgresql", "redis", "sqlite", "cache"],
     steps: [
       {
         title: "Set deployment configuration",
@@ -1114,20 +1121,124 @@ python lenora.py migration`,
       },
       {
         title: "Build and run with Docker",
-        body: "Use a slim Python image, install Git during the build if requirements install LenAPI from a Git URL, install dependencies, and run Uvicorn on the container interface. Keep local secrets and database files out of the build context. Run the schema migration before the first request when database-backed security storage is enabled. Persist SQLite storage with a volume, or use a managed SQL database for production.",
-        code: `FROM python:3.12-slim
+        body: "Install LenAPI from PyPI in the image; a Git client is not needed. Keep secrets and local database files out of the Docker build context, expose the same port that the server listens on, and persist SQLite data in a volume. Run checked-in migrations as a one-off release step before starting the app.",
+        code: `# requirements.txt — install from PyPI
+lenapi==0.1.4
+
+# Dockerfile
+FROM python:3.14-slim
 WORKDIR /app
 COPY requirements.txt .
-RUN apt-get update && apt-get install -y --no-install-recommends git && pip install --no-cache-dir -r requirements.txt && apt-get purge -y --auto-remove git && rm -rf /var/lib/apt/lists/*
+RUN python -m pip install --no-cache-dir -r requirements.txt
 COPY . .
-EXPOSE 8009
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8009"]
+EXPOSE 8003
+CMD ["python", "lenora.py", "run", "--host", "0.0.0.0", "--port", "8003", "--no-reload"]
 
-# .dockerignore should include .env, .venv/, __pycache__/, *.db, and .git/.
+# .dockerignore
+.env
+.env.*
+.venv/
+__pycache__/
+*.db
+*.sqlite*
+.git/
+
+docker build -t my-lenapi-app .`,
+        note: "Use the Python version supported by your LenAPI release. Keep production secrets outside the image and provide them through your container platform. The next steps show SQLite/memory and PostgreSQL/Redis configurations.",
+      },
+      {
+        title: "Deploy with SQLite and an in-memory cache",
+        body: "This single-container option uses SQLite for application data and LenAPI's in-process memory cache. Attach a persistent volume at /data so records survive container replacement. Keep SECURITY_STORAGE on the database so sessions, rate-limit state, and related security records are persisted with SQL. The cache is process-local and clears when the container restarts; use one application worker for this configuration.",
+        code: `# requirements.txt
+lenapi==0.1.4
+
+# settings.py
+import os
+from pathlib import Path
+
+DATA_DIR = Path(os.getenv("LENAPI_DATA_DIR", "/data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+HOST = ""
+PORT = int(os.getenv("LENAPI_PORT", "8003"))
+DATABASE_TYPE = "sqlite"
+DATABASE_URL = f"sqlite:///{DATA_DIR / 'lenapi.db'}"
+ACTIVATE_ASYNC = True
+CACHE_BACKEND = "memory"
+SECURITY_STORAGE = "database"
+SECRET_KEY = os.environ["LENAPI_SECRET_KEY"]
+
+# Build, migrate once, and start the container.
 docker build -t my-lenapi-app .
 docker volume create lenapi-data
-docker run --rm --env-file .env --mount source=lenapi-data,target=/data -e DATABASE_URL=sqlite:////data/lenapi.db my-lenapi-app python lenora.py migration
-docker run --rm -p 8009:8009 --env-file .env --mount source=lenapi-data,target=/data -e DATABASE_URL=sqlite:////data/lenapi.db my-lenapi-app`,
+docker run --rm --env-file .env --mount source=lenapi-data,target=/data my-lenapi-app python lenora.py migrate
+docker run -d --name my-lenapi-app --restart unless-stopped \\
+  -p 8003:8003 --env-file .env \\
+  --mount source=lenapi-data,target=/data my-lenapi-app`,
+        note: "Set LENAPI_SECRET_KEY to a stable random value in .env, for example with python -c 'import secrets; print(secrets.token_urlsafe(48))'. Do not commit .env. The database volume is durable; the memory cache is not shared across replicas.",
+      },
+      {
+        title: "Deploy with PostgreSQL and Redis",
+        body: "Use PostgreSQL for application tables and LenAPI's database-backed security storage, and Redis for the cache. The app image needs the postgres and redis extras from PyPI. Compose starts the database and cache as private services, waits for their health checks, and publishes only the API port. Use a persistent PostgreSQL volume. Redis is configured as the cache here, not as the framework security store.",
+        code: `# requirements.txt
+lenapi[postgres,redis]==0.1.4
+
+# settings.py
+import os
+
+HOST = ""
+PORT = int(os.getenv("LENAPI_PORT", "8003"))
+DATABASE_TYPE = "postgresql"
+DATABASE_URL = os.environ["LENAPI_DATABASE_URL"]
+ACTIVATE_ASYNC = True
+CACHE_BACKEND = "redis"
+REDIS_URL = os.environ["REDIS_URL"]
+SECURITY_STORAGE = "database"
+SECRET_KEY = os.environ["LENAPI_SECRET_KEY"]
+
+# compose.yaml
+services:
+  app:
+    build: .
+    ports: ["8003:8003"]
+    env_file: .env
+    environment:
+      LENAPI_DATABASE_URL: postgresql+psycopg://\${POSTGRES_USER}:\${POSTGRES_PASSWORD}@db:5432/\${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      LENAPI_PORT: "8003"
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+  db:
+    image: postgres:17-alpine
+    env_file: .env
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \${POSTGRES_USER} -d \${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  postgres-data:
+
+# .env — keep out of Git and the Docker build context
+POSTGRES_DB=lenapi
+POSTGRES_USER=lenapi
+POSTGRES_PASSWORD=replace-with-a-long-random-password
+LENAPI_SECRET_KEY=replace-with-a-long-random-signing-key
+
+# Apply reviewed migrations, then start services.
+docker compose build
+docker compose run --rm app python lenora.py migrate
+docker compose up -d`,
+        note: "Inside the container, db is the PostgreSQL hostname and redis is the Redis hostname; localhost would refer back to the app container. Keep SECURITY_STORAGE='database' when security state should stay in PostgreSQL. Set it to 'redis' only if you intentionally want shared security state in Redis.",
       },
       {
         title: "Deploy from Coolify",
@@ -1135,18 +1246,20 @@ docker run --rm -p 8009:8009 --env-file .env --mount source=lenapi-data,target=/
         code: `# Coolify application settings
 Build pack: Dockerfile
 Dockerfile: ./Dockerfile
-Port: 8009
+Container port: 8003
 Start command: use the Dockerfile CMD
 
-# Add in Coolify environment settings:
-DATABASE_TYPE=postgresql
-DATABASE_URL=postgresql+psycopg://user:password@db/app
-SECRET_KEY=<generated-secret>
+# Example Coolify environment variables for PostgreSQL + Redis:
+LENAPI_DATABASE_TYPE=postgresql
+LENAPI_DATABASE_URL=postgresql+psycopg://user:password@postgres-host:5432/app
+CACHE_BACKEND=redis
+REDIS_URL=redis://redis-host:6379/0
+SECURITY_STORAGE=database
+LENAPI_SECRET_KEY=<generated-secret>
 
-# Deployment migration step:
-python lenora.py migration
+# Release step: apply reviewed, checked-in revisions only
 python lenora.py migrate`,
-        note: "Do not commit production .env files or database files. If Coolify builds from a monorepo, set the build context and Dockerfile path to the generated LenAPI project directory.",
+        note: "Do not commit production .env files or database files. Configure Coolify build context and Dockerfile path for the application directory. Add PostgreSQL and Redis as reachable services, configure persistent database storage, and do not expose Redis publicly.",
       },
       {
         title: "Protect secrets and persistent data",
