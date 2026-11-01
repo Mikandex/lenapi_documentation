@@ -265,7 +265,7 @@ export const guides: Guide[] = [
       },
       {
         title: "Choose appropriate field types",
-        body: "Fields include AutoField, IntegerField, PositiveIntegerField, BigIntegerField/BigIntField, PositiveBigIntegerField, StringField, TextField, EmailField, PhoneField, IPField, URLField, BooleanField, FloatField, DecimalField, DateField, TimeField, DateTimeField, DurationField, JSONField/Json, UUIDField, ImageField, FileField, FileImageField, ForeignKeyField, OneToOneField, and ManyToManyField. Most fields default to nullable=True and blank=True; BooleanField defaults to True. JSONField stores JSON-compatible dictionaries, lists, strings, numbers, booleans, or null. Use a factory such as default=dict for mutable defaults.",
+        body: "Fields include AutoField, IntegerField, PositiveIntegerField, BigIntegerField/BigIntField, PositiveBigIntegerField, StringField, TextField, EmailField, PhoneField, IPField, URLField, BooleanField, FloatField, DecimalField, DateField, TimeField, DateTimeField, DurationField, JSONField/Json, UUIDField, ImageField, FileField, FileImageField, ForeignKeyField, OneToOneField, OneToManyField, and ManyToManyField. Most fields default to nullable=True and blank=True; null= is supported as an alias for nullable=. BooleanField defaults to True. JSONField stores JSON-compatible dictionaries, lists, strings, numbers, booleans, or null. Use a factory such as default=dict for mutable defaults.",
         code: `class ExamResult(model.Model):\n    score = model.DecimalField(max_digits=6, decimal_places=2)\n    details = model.Json(default=dict)\n    is_published = model.BooleanField(default=False, nullable=False)\n\nresult = ExamResult.create(\n    score=92.50,\n    details={"course": "Python", "attempt": 1},\n    is_published=True,\n)`,
         note: "LenAPI validates values for EmailField, PhoneField, IPField, URLField, UUIDField, and positive integer fields when a model is saved. Keep Pydantic request schemas as the API boundary: they validate and document request input before database logic runs.",
       },
@@ -339,9 +339,10 @@ class Enrollment(model.Model):
       },
       {
         title: "Define one-to-one and one-to-many relationships",
-        body: "One-to-one and one-to-many both use foreign keys, but their cardinality differs. OneToOneField places a unique foreign key on the dependent model, so each learner has at most one profile. For one-to-many, put a regular ForeignKeyField on the many-side: each learner points to one classroom, while a classroom can have many learners. There is no separate OneToManyField. Use special() to resolve a foreign key from one loaded row; use filter() to fetch the many-side rows.",
+        body: "One-to-one and one-to-many both use foreign keys, but their cardinality differs. OneToOneField places a unique foreign key on the dependent model, so each learner has at most one profile. For one-to-many, the child declares a ForeignKeyField and the parent declares OneToManyField(child_model, foreign_key='child_fk_field') to expose the collection. Use special() or aspecial() to resolve a foreign key or one-to-one relation; use batch()/abatch() to eager-load one-to-many collections.",
         code: `class Classroom(model.Model):
     name = model.StringField(max_length=120)
+    learners = model.OneToManyField("Learner", foreign_key="classroom_id")
 
 class Learner(model.Model):
     classroom_id = model.ForeignKeyField(
@@ -358,15 +359,16 @@ class LearnerProfile(model.Model):
 learner = Learner.get(id=1).special("classroom_id")
 classroom = learner.classroom_id  # Classroom instance, or None
 
-# One-to-many: list all learners assigned to the classroom.
-learners = Learner.filter(classroom_id=classroom.id).all()
+# One-to-many: batch-load the classroom collection.
+classrooms = Classroom.filter(id=classroom.id).batch("learners").all()
+learners = classrooms[0].learners if classrooms else []
 
 # One-to-one: fetch the learner's single profile.
 profile = LearnerProfile.get(learner_id=learner.id).get()
 
-# Async one-to-many and one-to-one queries.
-learners = await Learner.afilter(classroom_id=classroom_id).all()
-profile = await LearnerProfile.aget(learner_id=learner_id)`,
+# Async one-to-many and one-to-one loaders.
+classrooms = await Classroom.afilter(id=classroom_id).batch("learners").all()
+profile = await LearnerProfile.aget(id=profile_id).aspecial("learner_id")`,
         note: "OneToOneField creates a unique constraint automatically. The foreign key uses SET NULL here, so classroom_id must be nullable. Run python lenora.py migration after changing these models.",
       },
       {
@@ -457,10 +459,10 @@ python lenora.py migration`,
         code: `# All rows: full model instances\nstudents = Student.get.all()\nasync_students = await Student.aget.all()\n\n# One row by id\nstudent = Student.get(id=1).get()\nasync_student = await Student.aget(id=1)\n\n# Check whether a row exists\nexists = Student.get(id=1).exists()\nasync_exists = await Student.aget(id=1).exists()`,
       },
       {
-        title: "Fetch related rows through foreign keys and ManyToMany",
-        body: "Assuming Student.classroom_id is a ForeignKeyField and Teacher.courses is a ManyToManyField, sync code can resolve the foreign key with .special('classroom_id') and read a collection with teacher.courses.all(). In async code, fetch the foreign-key target with a second awaited lookup. For async ManyToMany, eager-load the collection with SQLAlchemy selectinload and an injected AsyncSession before accessing it; direct lazy relationship access cannot perform async I/O safely.",
-        code: `# Sync foreign key: special() resolves classroom_id to a Classroom object.\nstudent = Student.get(id=1).special("classroom_id")\nclassroom = student.classroom_id  # Classroom instance, or None\nclassroom_name = classroom.name if classroom else None\n\n# Async foreign key: follow the stored id with an async lookup.\nstudent = await Student.aget(id=1)\nclassroom = None\nif student is not None and student.classroom_id is not None:\n    classroom = await Classroom.aget(id=student.classroom_id)\n\n# Sync ManyToMany collection\nteacher = Teacher.get(id=1).get()\ncourses = teacher.courses.all()\n\n# Async ManyToMany: eager-load before reading the collection.\nfrom sqlalchemy import select\nfrom sqlalchemy.ext.asyncio import AsyncSession\nfrom sqlalchemy.orm import selectinload\n\n@app.get("/teachers/{teacher_id}/courses")\nasync def teacher_courses(teacher_id: int, db: AsyncSession):\n    result = await db.scalars(\n        select(Teacher)\n        .options(selectinload(Teacher.courses))\n        .where(Teacher.id == teacher_id)\n    )\n    teacher = result.one_or_none()\n    if teacher is None:\n        return []\n    return [{"id": course.id, "name": course.name}\n            for course in teacher.courses.all()]`,
-        note: "Declare both relationships in app/models.py and run python lenora.py migration. The async example requires ACTIVATE_ASYNC = True and an installed async database driver.",
+        title: "Fetch related rows with sync and async loaders",
+        body: "Use special() for foreign-key or one-to-one relationships, many() for many-to-many collections, and batch() for one-to-many collections. Query builders support filter(...).special(...).all() and get.all().special(...); async query builders support filter(...).special(...).all(), and already retrieved async lists can use aspecial(), amany(), or abatch(). These loaders batch related rows instead of issuing one lookup per parent.",
+        code: `# Relationship declarations\nclass Classroom(model.Model):\n    learners = model.OneToManyField("Learner", foreign_key="classroom_id")\n\nclass Learner(model.Model):\n    classroom_id = model.ForeignKeyField(Classroom, relation_name="classroom")\n    tags = model.ManyToManyField("Tag", related_name="learners")\n\nclass LearnerProfile(model.Model):\n    learner_id = model.OneToOneField(Learner, relation_name="learner")\n\n# Sync foreign key and one-to-one loaders\nlearners = Learner.filter(id=1).special("classroom_id").all()\nclassroom = learners[0].classroom if learners else None\nall_learners = Learner.get.all().special("classroom")\nprofile = LearnerProfile.get(id=1).special("learner_id")\n\n# Sync collection loaders\nclassrooms = Classroom.filter(id=1).batch("learners").all()\nlearners_in_room = classrooms[0].learners if classrooms else []\nlearners_with_tags = Learner.get.all().many("tags")\n\n# Async filtered query loaders\nlearners = await Learner.afilter(id=1).special("classroom").all()\nclassrooms = await Classroom.afilter(id=1).batch("learners").all()\n\n# Async all-row loaders\nall_learners = await Learner.aget.all()\nall_learners = await all_learners.aspecial("classroom_id")\nall_learners = await all_learners.amany("tags")\nall_classrooms = await Classroom.aget.all()\nall_classrooms = await all_classrooms.abatch("learners")`,
+        note: "Declare relationships in app/models.py and run python lenora.py migration. Async loading requires ACTIVATE_ASYNC = True and the matching async database driver.",
       },
       {
         title: "Select only the columns you need",
@@ -573,12 +575,12 @@ python lenora.py migration`,
     eyebrow: "GUIDE 10 · AUTHENTICATION",
     summary: "Choose JWT, API-key, or Basic authentication, then protect the whole app, a router, or an individual endpoint.",
     readTime: "11 min",
-    tags: ["jwt", "api key", "basic", "session", "bearer", "hmac", "oidc", "security"],
+    tags: ["jwt", "api key", "basic", "session", "bearer", "hmac", "oidc", "security", "async credentials", "single session", "cache", "cookie"],
     steps: [
       {
         title: "Select the default authenticator in settings.py",
-        body: "Choose one primary mode for app.authenticator. For quick development, LenAPI uses its built-in User model and its api_key column. You can instead pass your own user_model to authentication(); for custom API-key auth, explicitly provide api_key_field naming the model column that stores the key digest. Authentication does not automatically protect routes or generate login and registration endpoints.",
-        code: `# settings.py\nAUTHENTICATION = "jwt"  # jwt, api_key, basic_login, opaque_bearer, or session\n\n# JWT settings are generated with a unique SECRET_KEY.\nTOKEN = {\n    "SECRET_KEY": SECRET_KEY,\n    "LIFETIME_SECONDS": 3600,\n    "REFRESH_LIFETIME_SECONDS": 2592000,\n    "ISSUER": API_TITLE,\n}\n\n# Used only by basic_login. This can be username, email, phone, etc.\nBASIC_AUTH_FIELD = "username"`,
+        body: "Choose one primary mode for app.authenticator. For quick development, LenAPI uses its built-in User model and its api_key column. You can instead pass your own user_model to authentication(); for custom API-key auth, explicitly provide api_key_field naming the model column that stores the key digest. Authentication does not automatically protect routes or generate login and registration endpoints. ALLOW_MULTIPLE_SESSIONS controls whether a user may keep using credentials from multiple logins; set it to false to accept only the newest JWT login and, when configured on SessionAuth, the newest cookie session.",
+        code: `# settings.py\nAUTHENTICATION = "jwt"  # jwt, api_key, basic_login, opaque_bearer, or session\nALLOW_MULTIPLE_SESSIONS = False  # newest JWT login only\n\n# JWT settings are generated with a unique SECRET_KEY.\nTOKEN = {\n    "SECRET_KEY": SECRET_KEY,\n    "LIFETIME_SECONDS": 3600,\n    "REFRESH_LIFETIME_SECONDS": 2592000,\n    "ISSUER": API_TITLE,\n}\n\n# Used only by basic_login. This can be username, email, phone, etc.\nBASIC_AUTH_FIELD = "username"\n\n# app.cache is controlled separately by CACHE_BACKEND:\n# "memory", "database", or "redis". Use a shared backend for multiple workers.`,
       },
       {
         title: "Protect the whole app, a router, or one route",
@@ -590,7 +592,7 @@ python lenora.py migration`,
         title: "Use your own user model",
         body: "JWT and Basic authentication can use a developer model by passing user_model. For JWT, identifier_field selects both the model column used for lookup and the JSON field accepted by POST /auth/token; it defaults to username. For Basic login, set BASIC_AUTH_FIELD in settings.py or pass identifier_field. The password column must contain a LenAPI-compatible one-way hash. The framework default User remains available for quick setup.",
         code: `from lenapi_bootstrap import create_app\nfrom lenapi import authentication\n\napp = create_app(__file__, __package__)\nfrom app.models import Customer\n\n# Customer must have email and password columns.\nemail_jwt = authentication(\n    "jwt", user_model=Customer, identifier_field="email", app=app\n)\nemail_basic = authentication(\n    "basic_login", user_model=Customer, identifier_field="email", app=app\n)`,
-        note: "Pass the LENAPI app to app= when you want JWT refresh-token replay checks to use its shared security store. Do not pass a Router as app.",
+        note: "Pass the LENAPI app to app= so LenAPI can use its configured cache for active-session checks and its security store for refresh-token replay checks. Do not pass a Router as app. With multiple workers, configure a shared cache backend such as Redis or database storage; the in-memory cache is process-local.",
       },
       {
         title: "Mount email-based JWT token routes",
@@ -599,10 +601,16 @@ python lenora.py migration`,
         note: "This only configures login verification and token issuance. Create admins through a trusted registration/provisioning flow, and store passwords with make_password().",
       },
       {
+        title: "Use async credential verification and issue a single-session JWT pair",
+        body: "When you implement your own login route, call authenticate_async(identifier, password) in an async handler. It uses the model's async lookup and moves password hashing work off the event loop. With ALLOW_MULTIPLE_SESSIONS=False, issue tokens with await auth.issue_tokens(subject); this records the active login in app.cache. The most recently issued pair is valid and an earlier pair is rejected by protected routes and refresh-token checks.",
+        code: `from pydantic import BaseModel\nfrom lenapi_bootstrap import create_app\nfrom lenapi import Depends, HTTPException, authentication\n\napp = create_app(__file__, __package__)\nfrom app.models import ProjectAdmin\n\nauth = authentication(\n    "jwt",\n    user_model=ProjectAdmin,\n    identifier_field="email",\n    app=app,\n)\n\nclass AdminLogin(BaseModel):\n    email: str\n    password: str\n\n@app.post("/login")\nasync def login(payload: AdminLogin):\n    subject = await auth.authenticate_async(\n        identifier=payload.email,\n        password=payload.password,\n    )\n    if subject is None:\n        raise HTTPException(401, "Invalid email or password")\n\n    # Required for single-session mode; do not replace with create_access_token().\n    return await auth.issue_tokens(subject)\n\n@app.get("/profile", auth=auth)\ndef profile(identity=Depends(auth)):\n    return {"user_id": identity["sub"]}`,
+        note: "authenticate_async is available alongside auth.authenticate for synchronous handlers. It is a credential check, not a token issuer. issue_tokens returns access_token, refresh_token, token_type, and expires_in. Keep CACHE_BACKEND shared across workers when enforcing one active login across the deployment.",
+      },
+      {
         title: "Use JWT and mount token endpoints",
         body: "The default JWT authenticator checks usernames and password hashes against the framework User model. Mount its router to provide POST /auth/token and POST /auth/refresh, then attach the same authenticator to private routes. The token and refresh operations are intentionally hidden from Swagger; protected operations still show Bearer authentication.",
         code: `from lenapi import Depends, LENAPI, Router\nfrom lenapi.authentication import UserRegistration, register_user\n\napp = LENAPI()  # settings.AUTHENTICATION = "jwt"\njwt = app.authenticator\napp.include_router(jwt.router())  # POST /auth/token and /auth/refresh\n\npublic = Router(prefix="/auth")\n@public.post("/register")\ndef register(data: UserRegistration):\n    return register_user(data=data, authentication="jwt")\n\nprivate = Router(prefix="/api", auth=jwt)\n@private.get("/profile")\ndef profile(identity=Depends(jwt)):\n    return {"user_id": identity["sub"]}\n\napp.include_router(public)\napp.include_router(private)`,
-        note: "POST /auth/token accepts username and password and returns access_token plus refresh_token. Send the access token as Authorization: Bearer <access_token>. A refresh token is single-use; use shared database or Redis security storage when running multiple workers.",
+        note: "POST /auth/token accepts username and password and returns access_token plus refresh_token. Send the access token as Authorization: Bearer <access_token>. A refresh token is single-use; use shared database or Redis security storage when running multiple workers. When ALLOW_MULTIPLE_SESSIONS=False, the JWT active-session record is stored via app.cache and every login must issue tokens through this authenticator.",
       },
       {
         title: "Enable API-key authentication from the CLI",
@@ -628,9 +636,15 @@ python lenora.py migration`,
       },
       {
         title: "Use server-side sessions",
-        body: "A session dependency reads a cookie and resolves the session identity from app.security_store. Create the session only after your login route verifies credentials. Store the identity server-side and send only a random, HttpOnly session ID to the browser.",
-        code: `import json\nimport secrets\nfrom lenapi import Depends, JSONResponse, LENAPI, Request\nfrom lenapi.security import session_auth\n\napp = LENAPI()  # SECURITY_STORAGE defaults to database\nsession = session_auth(store=app.security_store, cookie_name="session_id")\n\n@app.post("/session/login")\nasync def login():\n    # Replace with real credential verification first.\n    identity = {"user_id": "123"}\n    session_id = secrets.token_urlsafe(32)\n    await app.security_store.set(\n        f"session:{session_id}", json.dumps(identity), ttl=3600\n    )\n    response = JSONResponse({"authenticated": True})\n    response.set_cookie(\n        "session_id", session_id, max_age=3600, path="/",\n        httponly=True, secure=True, samesite="lax",\n    )\n    return response\n\n@app.get("/session/me")\ndef session_me(identity=Depends(session)):\n    print(identity)\n    return identity\n\n@app.post("/session/logout")\nasync def logout(request: Request, identity=Depends(session)):\n    session_id = request.cookies.get("session_id")\n    print(session_id)\n    await app.security_store.delete(f"session:{session_id}")\n\n    response = JSONResponse({"message": "Logged out"})\n    response.delete_cookie("session_id")\n    return response`,
-        note: "For local plain-HTTP development, set secure=False; use secure=True behind HTTPS in production. Logout requires a valid session, deletes its server-side record, and expires the browser cookie. Add CSRF protection to state-changing cookie-authenticated routes.",
+        body: "A session dependency reads the configured cookie and resolves the identity from the server-side cache or security store. Create it only after verifying login credentials. With allow_multiple_sessions=False, creating a new session replaces the previous session for that user. The session ID is a cookie credential; it is not a JWT and should not be sent as Authorization: Bearer.",
+        code: `from pydantic import BaseModel\nfrom lenapi_bootstrap import create_app\nfrom lenapi import Depends, HTTPException, JSONResponse, Request, authentication\nfrom lenapi.security import session_auth\n\napp = create_app(__file__, __package__)\nfrom app.models import ProjectAdmin\n\nauth = authentication(\n    "jwt", user_model=ProjectAdmin, identifier_field="email", app=app\n)\nsession = session_auth(\n    cache=app.cache,\n    cookie_name="session_id",\n    allow_multiple_sessions=False,\n)\n\nclass AdminLogin(BaseModel):\n    email: str\n    password: str\n\n@app.post("/session/login")\nasync def login(payload: AdminLogin):\n    subject = await auth.authenticate_async(payload.email, payload.password)\n    if subject is None:\n        raise HTTPException(401, "Invalid email or password")\n\n    session_id = await session.create_session(\n        {"user_id": str(subject), "email": payload.email}, ttl=3600\n    )\n    response = JSONResponse({"authenticated": True})\n    response.set_cookie(\n        "session_id", session_id, max_age=3600, path="/",\n        httponly=True, secure=True, samesite="lax",\n    )\n    return response\n\n@app.get("/session/me", auth=session)\nasync def session_me(identity=Depends(session)):\n    return identity\n\n@app.post("/session/logout", auth=session)\nasync def logout(request: Request, identity=Depends(session)):\n    session_id = request.cookies.get("session_id")\n    await app.cache.delete(f"session:{session_id}")\n    response = JSONResponse({"message": "Logged out"})\n    response.delete_cookie("session_id", path="/")\n    return response`,
+        note: "The browser stores the Set-Cookie response and sends the cookie automatically to same-origin routes. For cross-origin browser requests, configure CORS credentials and send credentials: 'include'. With curl, save the cookie using -c cookies.txt at login and resend it using -b cookies.txt. For local plain HTTP, secure=False; use secure=True in production behind HTTPS. Add CSRF protection to state-changing cookie-authenticated routes.",
+      },
+      {
+        title: "Return JWT tokens and set a session cookie at login",
+        body: "A login handler may issue both credential types when the app has routes protected by JWT and other routes protected by a browser session. The JWT access token is returned in JSON and sent as a Bearer token. The session ID is set as an HttpOnly cookie and sent automatically by the browser. They are separate credentials: a session ID cannot be used as a Bearer token, and an access token does not satisfy Depends(session).",
+        code: `from pydantic import BaseModel\nfrom lenapi_bootstrap import create_app\nfrom lenapi import Depends, HTTPException, JSONResponse, authentication\nfrom lenapi.security import session_auth\n\napp = create_app(__file__, __package__)\nfrom app.models import ProjectAdmin\n\nauth = authentication(\n    "jwt", user_model=ProjectAdmin, identifier_field="email", app=app\n)\nsession = session_auth(\n    cache=app.cache, cookie_name="session_id", allow_multiple_sessions=False\n)\n\nclass AdminLogin(BaseModel):\n    email: str\n    password: str\n\n@app.post("/login")\nasync def login(payload: AdminLogin):\n    subject = await auth.authenticate_async(payload.email, payload.password)\n    if subject is None:\n        raise HTTPException(401, "Invalid email or password")\n\n    tokens = await auth.issue_tokens(str(subject))\n    session_id = await session.create_session(\n        {"user_id": str(subject), "email": payload.email}, ttl=3600\n    )\n    response = JSONResponse({"message": "Login successful", **tokens})\n    response.set_cookie(\n        "session_id", session_id, max_age=3600, path="/",\n        httponly=True, secure=True, samesite="lax",\n    )\n    return response\n\n# JWT route: client sends Authorization: Bearer <access_token>\n@app.get("/jwt-profile", auth=auth)\ndef jwt_profile(identity=Depends(auth)):\n    return {"user_id": identity["sub"]}\n\n# Session route: browser sends its session_id cookie automatically\n@app.get("/session-profile", auth=session)\ndef session_profile(identity=Depends(session)):\n    return identity`,
+        note: "This sample intentionally does not put the session ID in the JSON body: it is already delivered through the HttpOnly Set-Cookie header. For one active login, set ALLOW_MULTIPLE_SESSIONS=False and construct both auth dependencies with the same LENAPI app/cache. A second successful login replaces both the old JWT session and old cookie session.",
       },
       {
         title: "Use opaque bearer tokens",
@@ -1101,7 +1115,7 @@ python lenora.py migration`,
     eyebrow: "GUIDE 20 · OPERATIONS",
     summary: "Configure the server, database, secrets, proxy boundary, and production process.",
     readTime: "6 min",
-    tags: ["production", "uvicorn", "settings", "host", "port", "deployment", "secret", "docker", "postgresql", "redis", "sqlite", "cache"],
+    tags: ["production", "uvicorn", "settings", "host", "port", "deployment", "secret", "docker", "postgresql", "redis", "sqlite", "cache", "vps", "cpanel", "nginx", "systemd", "asgi"],
     steps: [
       {
         title: "Set deployment configuration",
@@ -1121,30 +1135,43 @@ python lenora.py migration`,
       },
       {
         title: "Build and run with Docker",
-        body: "Install LenAPI from PyPI in the image; a Git client is not needed. Keep secrets and local database files out of the Docker build context, expose the same port that the server listens on, and persist SQLite data in a volume. Run checked-in migrations as a one-off release step before starting the app.",
-        code: `# requirements.txt — install from PyPI
-lenapi==0.1.4.1
+        body: "Choose one Dockerfile based on how you install LenAPI. The PyPI version does not install Git. The GitHub version installs Git before pip processes a Git URL in requirements.txt. Both examples use Python 3.12, expose port 8009, and start the ASGI app with Uvicorn. Keep secrets and local database files out of the build context; persist SQLite data in a volume and apply reviewed migrations as a release step.",
+        code: `# Option A — install LenAPI from PyPI
+# requirements.txt includes your application dependencies, for example:
+lenapi
 
-# Dockerfile
-FROM python:3.14-slim
+# Dockerfile.pypi
+FROM python:3.12-slim
 WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir -r requirements.txt
 COPY . .
-EXPOSE 8003
-CMD ["python", "lenora.py", "run", "--host", "0.0.0.0", "--port", "8003", "--no-reload"]
+EXPOSE 8009
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8009"]
 
-# .dockerignore
-.env
-.env.*
-.venv/
-__pycache__/
-*.db
-*.sqlite*
-.git/
+# Option B — install LenAPI directly from GitHub
+# requirements.txt:
+# git+https://github.com/Mikandex/lenapi.git@main
 
-docker build -t my-lenapi-app .`,
-        note: "Use the Python version supported by your LenAPI release. Keep production secrets outside the image and provide them through your container platform. The next steps show SQLite/memory and PostgreSQL/Redis configurations.",
+# Dockerfile.github
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/**
+COPY requirements.txt .
+RUN python -m pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8009
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8009"]
+
+# Build either option:
+docker build -f Dockerfile.pypi -t my-lenapi-app .
+# or
+docker build -f Dockerfile.github -t my-lenapi-app .`,
+        note: "For reproducible production builds, pin the PyPI version or Git commit/tag rather than tracking @main. The requirements file must also include your app's other dependencies. Add .env, .venv/, __pycache__/, *.db, *.sqlite*, and .git/ to .dockerignore. Set secrets through the container platform, not in the Dockerfile.",
       },
       {
         title: "Deploy with SQLite and an in-memory cache",
@@ -1260,6 +1287,59 @@ LENAPI_SECRET_KEY=<generated-secret>
 # Release step: apply reviewed, checked-in revisions only
 python lenora.py migrate`,
         note: "Do not commit production .env files or database files. Configure Coolify build context and Dockerfile path for the application directory. Add PostgreSQL and Redis as reachable services, configure persistent database storage, and do not expose Redis publicly.",
+      },
+      {
+        title: "Deploy on a VPS with Uvicorn and Nginx",
+        body: "On a VPS, run LenAPI as an ASGI process managed by systemd and keep Uvicorn bound to localhost. Let Nginx handle the public domain, HTTPS, and reverse proxying. Point the domain's DNS records at the VPS, install the app in a virtual environment, configure production environment variables, and run migrations before starting the service. Forward WebSocket upgrade headers if the application uses WebSockets.",
+        code: `# Example systemd unit: /etc/systemd/system/lenapi.service
+[Unit]
+Description=LenAPI ASGI application
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/srv/myapi
+EnvironmentFile=/etc/myapi/myapi.env
+ExecStart=/srv/myapi/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8009 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+
+# Example Nginx site configuration
+server {
+    listen 80;
+    server_name api.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8009;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+# After configuring the unit and Nginx:
+sudo systemctl daemon-reload
+sudo systemctl enable --now lenapi
+sudo nginx -t && sudo systemctl reload nginx`,
+        note: "Adjust paths, service user, domain, and environment file to your VPS. Restrict Uvicorn's port to localhost or the private network; expose only the reverse proxy publicly. Configure TLS using your host's certificate workflow. For production, use a stable database and shared cache/security storage when running multiple workers.",
+      },
+      {
+        title: "Use LenAPI with cPanel",
+        body: "Check the hosting plan before uploading the app. cPanel's documented Python Application Manager / Passenger workflow is for Python WSGI applications. LenAPI is ASGI, so that standard workflow does not by itself run a LenAPI app. Ask the host specifically whether it supports a persistent Uvicorn/ASGI process, domain reverse proxying, and WebSocket proxying. If it only offers the standard WSGI Passenger setup, deploy LenAPI on a VPS or another ASGI-capable service instead.",
+        list: [
+          "If the provider supports ASGI: create the Python environment, install requirements, configure the app's environment variables, and have the provider proxy the domain to the Uvicorn process. Run migrations as a deployment step.",
+          "If you have a VPS with cPanel and root access: run Uvicorn separately under systemd on a private localhost port, then configure the web server to proxy your domain to that port. cPanel can manage the domain, while the ASGI process runs independently.",
+          "If the plan provides only Passenger/WSGI with no ASGI process or reverse proxy support: use an ASGI-capable VPS/host. Do not point Passenger at a WSGI adapter and assume it supports LenAPI's ASGI features or WebSockets.",
+        ],
+        note: "cPanel capabilities vary by host and server configuration. Confirm ASGI, long-running process, reverse proxy, and WebSocket support with the hosting provider before choosing the plan. Official cPanel references: https://docs.cpanel.net/knowledge-base/web-services/how-to-install-a-python-wsgi-application/ and https://docs.cpanel.net/knowledge-base/web-services/using-passenger-applications/.",
       },
       {
         title: "Protect secrets and persistent data",
